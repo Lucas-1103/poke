@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>寶可夢卡牌圖鑑 (雙語切換版)</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+</head>
+<body class="bg-slate-100 min-h-screen p-8 font-sans">
+  
+  <div class="max-w-5xl mx-auto">
+    <div class="flex flex-col md:flex-row justify-between items-center mb-8 gap-4">
+      <h1 class="text-4xl font-black text-red-600 tracking-widest drop-shadow-sm">
+        POKÉDEX
+      </h1>
+      
+      <div class="flex items-center gap-2 bg-white px-4 py-2 rounded-xl shadow border border-gray-200">
+        <span class="text-gray-500 font-bold text-sm">🌐 語言 / Language:</span>
+        <select id="langSelect" class="bg-transparent font-bold text-gray-800 focus:outline-none cursor-pointer">
+          <option value="zh-Hant">繁體中文</option>
+          <option value="en">English</option>
+        </select>
+      </div>
+    </div>
+
+    <div id="pokemonGrid" class="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-6 mb-10">
+      </div>
+
+    <div class="flex justify-center items-center gap-6 pb-8">
+      <button id="prevBtn" class="bg-gray-800 text-white px-6 py-3 rounded-xl font-bold disabled:opacity-30 disabled:cursor-not-allowed hover:bg-gray-700 transition shadow-md">
+        ◀ 上一頁
+      </button>
+      
+      <div class="bg-white px-6 py-2 rounded-xl shadow-md border-2 border-gray-200">
+        <span id="pageInfo" class="text-xl font-bold text-gray-700">第 1 頁</span>
+      </div>
+
+      <button id="nextBtn" class="bg-red-500 text-white px-6 py-3 rounded-xl font-bold hover:bg-red-600 transition shadow-md">
+        下一頁 ▶
+      </button>
+    </div>
+  </div>
+
+  <script>
+    const pokemonGrid = document.getElementById('pokemonGrid');
+    const prevBtn = document.getElementById('prevBtn');
+    const nextBtn = document.getElementById('nextBtn');
+    const pageInfo = document.getElementById('pageInfo');
+    const langSelect = document.getElementById('langSelect');
+
+    const limit = 6;
+    let currentPage = 1;
+    let currentLang = 'zh-Hant'; // 預設語言為繁體中文
+    let currentPageData = []; // 用來暫存當前頁面的完整資料 (快取)
+
+    // 寶可夢屬性的中英文字典 (減少 API 請求負擔)
+    const typeTranslations = {
+      normal: '一般', fire: '火', water: '水', electric: '電', grass: '草', ice: '冰',
+      fighting: '格鬥', poison: '毒', ground: '地面', flying: '飛行', psychic: '超能力',
+      bug: '蟲', rock: '岩石', ghost: '幽靈', dragon: '龍', dark: '惡', steel: '鋼', fairy: '妖精'
+    };
+
+    // 載入寶可夢資料
+    async function loadPokemons(page) {
+      pokemonGrid.innerHTML = `
+        <div class="col-span-full text-center py-20">
+          <p class="text-2xl font-bold text-gray-500 animate-pulse">連線至寶可夢中心...</p>
+        </div>
+      `;
+
+      const offset = (page - 1) * limit;
+
+      try {
+        const listResponse = await fetch(`https://pokeapi.co/api/v2/pokemon?limit=${limit}&offset=${offset}`);
+        const listData = await listResponse.json();
+
+        // 平行抓取：基本資料 (pokemon) + 翻譯資料 (pokemon-species)
+        const detailPromises = listData.results.map(async (pokemon) => {
+          // 從網址中提取寶可夢 ID
+          const id = pokemon.url.split('/').filter(Boolean).pop(); 
+          
+          // 同時發出兩個請求
+          const [pokeRes, speciesRes] = await Promise.all([
+            fetch(`https://pokeapi.co/api/v2/pokemon/${id}`).then(res => res.json()),
+            fetch(`https://pokeapi.co/api/v2/pokemon-species/${id}`).then(res => res.json())
+          ]);
+
+          // 將兩邊的資料合併回傳
+          return {
+            basic: pokeRes,
+            species: speciesRes
+          };
+        });
+
+        // 取得所有合併後的資料，並存入全域變數做快取
+        currentPageData = await Promise.all(detailPromises);
+
+        renderCards(); // 呼叫渲染函式
+
+        pageInfo.textContent = `第 ${currentPage} 頁`;
+        prevBtn.disabled = currentPage === 1;
+
+      } catch (error) {
+        pokemonGrid.innerHTML = '<div class="col-span-full text-center py-20 text-xl font-bold text-red-500">載入失敗，請稍後再試！</div>';
+        console.error("API 請求錯誤:", error);
+      }
+    }
+
+    // 從 species 資料中過濾出正確語言的名字
+    function getLocalizedName(speciesData, lang) {
+      const nameObj = speciesData.names.find(n => n.language.name === lang);
+      // 如果找不到該語言，預設退回英文
+      return nameObj ? nameObj.name : speciesData.name;
+    }
+
+    // 渲染卡牌的函式
+    function renderCards() {
+      pokemonGrid.innerHTML = ''; 
+
+      // 迴圈遍歷快取中的資料
+      currentPageData.forEach(data => {
+        const imageUrl = data.basic.sprites.other['official-artwork'].front_default || data.basic.sprites.front_default;
+        const pokeId = String(data.basic.id).padStart(3, '0');
+        
+        // 取得當前選擇語言的名字
+        const displayName = getLocalizedName(data.species, currentLang);
+
+        // 處理屬性標籤的翻譯
+        const typesHtml = data.basic.types.map(t => {
+          const typeEn = t.type.name;
+          const typeDisplay = currentLang === 'zh-Hant' ? (typeTranslations[typeEn] || typeEn) : typeEn;
+          return `<span class="px-3 py-1 bg-slate-200 text-slate-600 rounded-full text-xs font-bold capitalize border border-slate-300">${typeDisplay}</span>`;
+        }).join('');
+
+        const cardHtml = `
+          <div class="bg-white rounded-2xl shadow-lg p-6 flex flex-col items-center transform transition duration-300 hover:-translate-y-2 hover:shadow-2xl border-t-8 border-red-500 group cursor-pointer">
+            <div class="w-full flex justify-between items-center mb-4">
+              <span class="text-gray-400 font-bold">#${pokeId}</span>
+            </div>
+            
+            <div class="w-32 h-32 mb-4 bg-slate-50 rounded-full flex items-center justify-center p-2 shadow-inner group-hover:scale-110 transition duration-300">
+              <img src="${imageUrl}" alt="${displayName}" class="w-full h-full object-contain drop-shadow-md">
+            </div>
+            
+            <h2 class="text-2xl font-extrabold text-gray-800 capitalize mb-4 tracking-wide">${displayName}</h2>
+            
+            <div class="flex gap-2">
+              ${typesHtml}
+            </div>
+          </div>
+        `;
+
+        pokemonGrid.innerHTML += cardHtml;
+      });
+    }
+
+    // 事件監聽：語言切換
+    langSelect.addEventListener('change', function() {
+      currentLang = this.value;
+      // 切換語言時，不需要重新發 API，直接用快取的資料重新畫畫面！
+      if (currentPageData.length > 0) {
+        renderCards();
+      }
+    });
+
+    // 事件監聽：上一頁/下一頁
+    prevBtn.addEventListener('click', () => {
+      if (currentPage > 1) {
+        currentPage--;
+        loadPokemons(currentPage);
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+      }
+    });
+
+    nextBtn.addEventListener('click', () => {
+      currentPage++;
+      loadPokemons(currentPage);
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    });
+
+    // 網頁開啟時，自動載入
+    loadPokemons(currentPage);
+  </script>
+</body>
+</html>s
